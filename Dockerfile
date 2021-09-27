@@ -1,4 +1,8 @@
-FROM golang:1.15.8 as build
+# Update the base image in Makefile when updating golang version. This has to
+# be pre-pulled in order to work on GCB.
+FROM golang:1.17.0 as build
+
+RUN apt-get update && apt-get --no-install-recommends install -y libcap2-bin && apt-get clean && rm -rf /var/lib/apt/lists/* 
 
 WORKDIR /go/src/sigs.k8s.io/metrics-server
 COPY go.mod .
@@ -12,8 +16,8 @@ COPY Makefile Makefile
 ARG ARCH
 ARG GIT_COMMIT
 ARG GIT_TAG
-ARG BUILD_DATE
 RUN make metrics-server
+RUN setcap cap_net_bind_service=+ep metrics-server
 
 FROM gcr.io/distroless/static:latest
 COPY --from=build /go/src/sigs.k8s.io/metrics-server/metrics-server /

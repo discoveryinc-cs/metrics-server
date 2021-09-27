@@ -22,6 +22,7 @@ import (
 	openapinamer "k8s.io/apiserver/pkg/endpoints/openapi"
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	genericoptions "k8s.io/apiserver/pkg/server/options"
+	"k8s.io/client-go/pkg/version"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/component-base/cli/flag"
@@ -29,7 +30,6 @@ import (
 	"sigs.k8s.io/metrics-server/pkg/api"
 	generatedopenapi "sigs.k8s.io/metrics-server/pkg/api/generated/openapi"
 	"sigs.k8s.io/metrics-server/pkg/server"
-	"sigs.k8s.io/metrics-server/pkg/version"
 )
 
 type Options struct {
@@ -37,6 +37,7 @@ type Options struct {
 	SecureServing  *genericoptions.SecureServingOptionsWithLoopback
 	Authentication *genericoptions.DelegatingAuthenticationOptions
 	Authorization  *genericoptions.DelegatingAuthorizationOptions
+	Audit          *genericoptions.AuditOptions
 	Features       *genericoptions.FeatureOptions
 	KubeletClient  *KubeletClientOptions
 
@@ -49,12 +50,16 @@ type Options struct {
 }
 
 func (o *Options) Validate() []error {
-	return o.KubeletClient.Validate()
+	errors := o.KubeletClient.Validate()
+	if o.MetricResolution < 10*time.Second {
+		errors = append(errors, fmt.Errorf("Metric-resolution should be a time duration at least 10s, but value %v provided", o.MetricResolution))
+	}
+	return errors
 }
 
 func (o *Options) Flags() (fs flag.NamedFlagSets) {
 	msfs := fs.FlagSet("metrics server")
-	msfs.DurationVar(&o.MetricResolution, "metric-resolution", o.MetricResolution, "The resolution at which metrics-server will retain metrics.")
+	msfs.DurationVar(&o.MetricResolution, "metric-resolution", o.MetricResolution, "The resolution at which metrics-server will retain metrics, must set value at least 10s.")
 	msfs.BoolVar(&o.ShowVersion, "version", false, "Show version")
 	msfs.StringVar(&o.Kubeconfig, "kubeconfig", o.Kubeconfig, "The path to the kubeconfig used to connect to the Kubernetes API server and the Kubelets (defaults to in-cluster config)")
 
@@ -62,6 +67,7 @@ func (o *Options) Flags() (fs flag.NamedFlagSets) {
 	o.SecureServing.AddFlags(fs.FlagSet("apiserver secure serving"))
 	o.Authentication.AddFlags(fs.FlagSet("apiserver authentication"))
 	o.Authorization.AddFlags(fs.FlagSet("apiserver authorization"))
+	o.Audit.AddFlags(fs.FlagSet("apiserver audit log"))
 	o.Features.AddFlags(fs.FlagSet("features"))
 
 	return fs
@@ -74,6 +80,7 @@ func NewOptions() *Options {
 		Authentication: genericoptions.NewDelegatingAuthenticationOptions(),
 		Authorization:  genericoptions.NewDelegatingAuthorizationOptions(),
 		Features:       genericoptions.NewFeatureOptions(),
+		Audit:          genericoptions.NewAuditOptions(),
 		KubeletClient:  NewKubeletClientOptions(),
 
 		MetricResolution: 60 * time.Second,
@@ -116,7 +123,13 @@ func (o Options) ApiserverConfig() (*genericapiserver.Config, error) {
 			return nil, err
 		}
 	}
-	serverConfig.Version = version.VersionInfo()
+
+	if err := o.Audit.ApplyTo(serverConfig); err != nil {
+		return nil, err
+	}
+
+	versionGet := version.Get()
+	serverConfig.Version = &versionGet
 	// enable OpenAPI schemas
 	serverConfig.OpenAPIConfig = genericapiserver.DefaultOpenAPIConfig(generatedopenapi.GetOpenAPIDefinitions, openapinamer.NewDefinitionNamer(api.Scheme))
 	serverConfig.OpenAPIConfig.Info.Title = "Kubernetes metrics-server"
@@ -141,5 +154,6 @@ func (o Options) restConfig() (*rest.Config, error) {
 	}
 	// Use protobufs for communication with apiserver
 	config.ContentType = "application/vnd.kubernetes.protobuf"
+	rest.SetKubernetesDefaults(config)
 	return config, err
 }
