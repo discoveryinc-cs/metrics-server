@@ -16,32 +16,24 @@ package storage
 
 import (
 	"strings"
-	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/types"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	apitypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/component-base/metrics/testutil"
 	"k8s.io/metrics/pkg/apis/metrics"
-
-	"sigs.k8s.io/metrics-server/pkg/api"
 )
-
-func TestPodStorage(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "pod storage Suite")
-}
 
 var _ = Describe("Pod storage", func() {
 	It("provides pod metrics from stored batches", func() {
 		s := NewStorage(60 * time.Second)
 		containerStart := time.Now()
-		podRef := types.NamespacedName{Name: "pod1", Namespace: "ns1"}
+		podRef := apitypes.NamespacedName{Name: "pod1", Namespace: "ns1"}
 
 		By("storing first batch with pod1 metrics")
 		s.Store(podMetricsBatch(podMetrics(podRef, containerMetricsPoint{"container1", newMetricsPoint(containerStart, containerStart.Add(120*time.Second), 1*CoreSecond, 4*MiByte)})))
@@ -55,18 +47,20 @@ var _ = Describe("Pod storage", func() {
 
 		By("returning metric for pod1")
 		Expect(s.Ready()).To(BeTrue())
-		ts, ms, err := s.GetPodMetrics(podRef)
+		ms, err := s.GetPodMetrics(&metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{Name: podRef.Name, Namespace: podRef.Namespace}})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(ts).Should(BeEquivalentTo([]api.TimeInfo{{Timestamp: containerStart.Add(125 * time.Second), Window: 5 * time.Second}}))
-		Expect(ms).Should(BeEquivalentTo([][]metrics.ContainerMetrics{{{
+		Expect(ms).To(HaveLen(1))
+		Expect(ms[0].Timestamp.Time).Should(BeEquivalentTo(containerStart.Add(125 * time.Second)))
+		Expect(ms[0].Window.Duration).Should(BeEquivalentTo(5 * time.Second))
+		Expect(ms[0].Containers).Should(BeEquivalentTo([]metrics.ContainerMetrics{{
 			Name: "container1",
-			Usage: v1.ResourceList{
-				v1.ResourceCPU:    *resource.NewScaledQuantity(1*CoreSecond, -9),
-				v1.ResourceMemory: *resource.NewQuantity(5*MiByte, resource.BinarySI),
+			Usage: corev1.ResourceList{
+				corev1.ResourceCPU:    *resource.NewScaledQuantity(1*CoreSecond, -9),
+				corev1.ResourceMemory: *resource.NewQuantity(5*MiByte, resource.BinarySI),
 			},
-		}}}))
+		}}))
 		By("return empty for not stored pod2")
-		checkPodResponseEmpty(s, types.NamespacedName{Namespace: "ns1", Name: "pod2"})
+		checkPodResponseEmpty(s, apitypes.NamespacedName{Namespace: "ns1", Name: "pod2"})
 
 		By("storing third batch without metrics")
 		s.Store(podMetricsBatch())
@@ -78,7 +72,7 @@ var _ = Describe("Pod storage", func() {
 	It("returns timestamp of earliest container of pod", func() {
 		s := NewStorage(60 * time.Second)
 		containerStart := time.Now()
-		podRef := types.NamespacedName{Name: "pod1", Namespace: "ns1"}
+		podRef := apitypes.NamespacedName{Name: "pod1", Namespace: "ns1"}
 
 		By("store first batch")
 		s.Store(podMetricsBatch(podMetrics(podRef,
@@ -94,14 +88,16 @@ var _ = Describe("Pod storage", func() {
 
 		By("returning correct metric values")
 		Expect(s.Ready()).To(BeTrue())
-		ts, _, err := s.GetPodMetrics(podRef)
+		ms, err := s.GetPodMetrics(&metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{Name: podRef.Name, Namespace: podRef.Namespace}})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(ts).Should(BeEquivalentTo([]api.TimeInfo{{Timestamp: containerStart.Add(120 * time.Second), Window: 10 * time.Second}}))
+		Expect(ms).Should(HaveLen(1))
+		Expect(ms[0].Timestamp.Time).Should(BeEquivalentTo(containerStart.Add(120 * time.Second)))
+		Expect(ms[0].Window.Duration).Should(BeEquivalentTo(10 * time.Second))
 	})
 	It("handle repeated pod metric point", func() {
 		s := NewStorage(60 * time.Second)
 		containerStart := time.Now()
-		podRef := types.NamespacedName{Name: "pod1", Namespace: "ns1"}
+		podRef := apitypes.NamespacedName{Name: "pod1", Namespace: "ns1"}
 
 		By("storing first batch with pod1 metrics")
 		batch := podMetricsBatch(podMetrics(podRef, containerMetricsPoint{"container1", newMetricsPoint(containerStart, containerStart.Add(110*time.Second), 1*CoreSecond, 4*MiByte)}))
@@ -118,7 +114,7 @@ var _ = Describe("Pod storage", func() {
 		pointsStored.Reset()
 		s := NewStorage(60 * time.Second)
 		containerStart := time.Now()
-		podRef := types.NamespacedName{Name: "pod1", Namespace: "ns1"}
+		podRef := apitypes.NamespacedName{Name: "pod1", Namespace: "ns1"}
 
 		err := testutil.CollectAndCompare(pointsStored, strings.NewReader(`
 		`), "metrics_server_storage_points")
@@ -155,7 +151,7 @@ var _ = Describe("Pod storage", func() {
 	It("should detect container restart and return results based on window from start time", func() {
 		s := NewStorage(60 * time.Second)
 		containerStart := time.Now()
-		podRef := types.NamespacedName{Name: "pod1", Namespace: "ns1"}
+		podRef := apitypes.NamespacedName{Name: "pod1", Namespace: "ns1"}
 
 		By("storing first batch with pod1 metrics")
 		s.Store(podMetricsBatch(podMetrics(podRef, containerMetricsPoint{"container1", newMetricsPoint(containerStart, containerStart.Add(10*time.Second), 1*CoreSecond, 4*MiByte)})))
@@ -164,21 +160,23 @@ var _ = Describe("Pod storage", func() {
 		s.Store(podMetricsBatch(podMetrics(podRef, containerMetricsPoint{"container1", newMetricsPoint(containerStart.Add(15*time.Second), containerStart.Add(25*time.Second), 5*CoreSecond, 5*MiByte)})))
 
 		By("return results based on window from start time")
-		ts, ms, err := s.GetPodMetrics(podRef)
+		ms, err := s.GetPodMetrics(&metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{Name: podRef.Name, Namespace: podRef.Namespace}})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(ts).Should(BeEquivalentTo([]api.TimeInfo{{Timestamp: containerStart.Add(25 * time.Second), Window: 10 * time.Second}}))
-		Expect(ms).Should(BeEquivalentTo([][]metrics.ContainerMetrics{{{
+		Expect(ms).To(HaveLen(1))
+		Expect(ms[0].Timestamp.Time).Should(BeEquivalentTo(containerStart.Add(25 * time.Second)))
+		Expect(ms[0].Window.Duration).Should(BeEquivalentTo(10 * time.Second))
+		Expect(ms[0].Containers).Should(BeEquivalentTo([]metrics.ContainerMetrics{{
 			Name: "container1",
-			Usage: v1.ResourceList{
-				v1.ResourceCPU:    *resource.NewScaledQuantity(500000000, -9),
-				v1.ResourceMemory: *resource.NewQuantity(5*MiByte, resource.BinarySI),
+			Usage: corev1.ResourceList{
+				corev1.ResourceCPU:    *resource.NewScaledQuantity(500000000, -9),
+				corev1.ResourceMemory: *resource.NewQuantity(5*MiByte, resource.BinarySI),
 			},
-		}}}))
+		}}))
 	})
 	It("should return pod empty metrics if decreased data point reported", func() {
 		s := NewStorage(60 * time.Second)
 		containerStart := time.Now()
-		podRef := types.NamespacedName{Name: "pod1", Namespace: "ns1"}
+		podRef := apitypes.NamespacedName{Name: "pod1", Namespace: "ns1"}
 
 		By("storing previous metrics")
 		s.Store(podMetricsBatch(podMetrics(podRef, containerMetricsPoint{"container1", newMetricsPoint(containerStart, containerStart.Add(110*time.Second), 20*CoreSecond, 4*MiByte)})))
@@ -187,16 +185,15 @@ var _ = Describe("Pod storage", func() {
 		s.Store(podMetricsBatch(podMetrics(podRef, containerMetricsPoint{"container1", newMetricsPoint(containerStart, containerStart.Add(120*time.Second), 10*CoreSecond, 4*MiByte)})))
 
 		By("should get empty metrics when cpu metrics decrease")
-		ts, ms, err := s.GetPodMetrics(podRef)
+		ms, err := s.GetPodMetrics(&metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{Name: podRef.Name, Namespace: podRef.Namespace}})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(ts).To(HaveLen(1))
 		Expect(ms).To(HaveLen(1))
-		Expect(ms[0]).To(HaveLen(0))
+		Expect(ms[0].Containers).To(HaveLen(0))
 	})
 	It("should handle pod metrics older then prev", func() {
 		s := NewStorage(60 * time.Second)
 		containerStart := time.Now()
-		podRef := types.NamespacedName{Name: "pod1", Namespace: "ns1"}
+		podRef := apitypes.NamespacedName{Name: "pod1", Namespace: "ns1"}
 
 		By("storing previous metrics")
 		s.Store(podMetricsBatch(podMetrics(podRef, containerMetricsPoint{"container1", newMetricsPoint(containerStart, containerStart.Add(1115*time.Second), 20*CoreSecond, 4*MiByte)})))
@@ -213,7 +210,7 @@ var _ = Describe("Pod storage", func() {
 	It("should handle pod metrics prev.ts < newNode.ts < last.ts", func() {
 		s := NewStorage(60 * time.Second)
 		containerStart := time.Now()
-		podRef := types.NamespacedName{Name: "pod1", Namespace: "ns1"}
+		podRef := apitypes.NamespacedName{Name: "pod1", Namespace: "ns1"}
 
 		By("storing previous metrics")
 		s.Store(podMetricsBatch(podMetrics(podRef, containerMetricsPoint{"container1", newMetricsPoint(containerStart, containerStart.Add(115*time.Second), 10*CoreSecond, 4*MiByte)})))
@@ -225,21 +222,23 @@ var _ = Describe("Pod storage", func() {
 		s.Store(podMetricsBatch(podMetrics(podRef, containerMetricsPoint{"container1", newMetricsPoint(containerStart, containerStart.Add(120*time.Second), 35*CoreSecond, 5*MiByte)})))
 
 		By("should get non-empty metrics after stored older metrics than previous")
-		ts, ms, err := s.GetPodMetrics(podRef)
+		ms, err := s.GetPodMetrics(&metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{Name: podRef.Name, Namespace: podRef.Namespace}})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(ts).Should(BeEquivalentTo([]api.TimeInfo{{Timestamp: containerStart.Add(120 * time.Second), Window: 5 * time.Second}}))
-		Expect(ms).Should(BeEquivalentTo([][]metrics.ContainerMetrics{{{
+		Expect(ms).To(HaveLen(1))
+		Expect(ms[0].Timestamp.Time).Should(BeEquivalentTo(containerStart.Add(120 * time.Second)))
+		Expect(ms[0].Window.Duration).Should(BeEquivalentTo(5 * time.Second))
+		Expect(ms[0].Containers).Should(BeEquivalentTo([]metrics.ContainerMetrics{{
 			Name: "container1",
-			Usage: v1.ResourceList{
-				v1.ResourceCPU:    *resource.NewScaledQuantity(5*CoreSecond, -9),
-				v1.ResourceMemory: *resource.NewQuantity(5*MiByte, resource.BinarySI),
+			Usage: corev1.ResourceList{
+				corev1.ResourceCPU:    *resource.NewScaledQuantity(5*CoreSecond, -9),
+				corev1.ResourceMemory: *resource.NewQuantity(5*MiByte, resource.BinarySI),
 			},
-		}}}))
+		}}))
 	})
 	It("should not use start time to return metric in one cycle for long running container", func() {
 		s := NewStorage(60 * time.Second)
 		containerStart := time.Now()
-		podRef := types.NamespacedName{Name: "pod1", Namespace: "ns1"}
+		podRef := apitypes.NamespacedName{Name: "pod1", Namespace: "ns1"}
 
 		By("storing first batch with pod1 metrics")
 		s.Store(podMetricsBatch(podMetrics(podRef, containerMetricsPoint{"container1", newMetricsPoint(containerStart, containerStart.Add(120*time.Second), 1*CoreSecond, 4*MiByte)})))
@@ -249,27 +248,29 @@ var _ = Describe("Pod storage", func() {
 	It("should use start time to return metric in one cycle for fresh new container", func() {
 		s := NewStorage(60 * time.Second)
 		containerStart := time.Now()
-		podRef := types.NamespacedName{Name: "pod1", Namespace: "ns1"}
+		podRef := apitypes.NamespacedName{Name: "pod1", Namespace: "ns1"}
 
 		By("storing first batch with pod1 metrics")
 		s.Store(podMetricsBatch(podMetrics(podRef, containerMetricsPoint{"container1", newMetricsPoint(containerStart, containerStart.Add(10*time.Second), 10*CoreSecond, 4*MiByte)})))
 		Expect(s.Ready()).To(BeTrue())
 
-		ts, ms, err := s.GetPodMetrics(podRef)
+		ms, err := s.GetPodMetrics(&metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{Name: podRef.Name, Namespace: podRef.Namespace}})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(ts).Should(BeEquivalentTo([]api.TimeInfo{{Timestamp: containerStart.Add(10 * time.Second), Window: 10 * time.Second}}))
-		Expect(ms).Should(BeEquivalentTo([][]metrics.ContainerMetrics{{{
+		Expect(ms).To(HaveLen(1))
+		Expect(ms[0].Timestamp.Time).Should(BeEquivalentTo(containerStart.Add(10 * time.Second)))
+		Expect(ms[0].Window.Duration).Should(BeEquivalentTo(10 * time.Second))
+		Expect(ms[0].Containers).Should(BeEquivalentTo([]metrics.ContainerMetrics{{
 			Name: "container1",
-			Usage: v1.ResourceList{
-				v1.ResourceCPU:    *resource.NewScaledQuantity(1*CoreSecond, -9),
-				v1.ResourceMemory: *resource.NewQuantity(4*MiByte, resource.BinarySI),
+			Usage: corev1.ResourceList{
+				corev1.ResourceCPU:    *resource.NewScaledQuantity(1*CoreSecond, -9),
+				corev1.ResourceMemory: *resource.NewQuantity(4*MiByte, resource.BinarySI),
 			},
-		}}}))
+		}}))
 	})
 	It("should get empty metrics in one cycle for fresh new container's start time after timestamp", func() {
 		s := NewStorage(60 * time.Second)
 		containerStart := time.Now()
-		podRef := types.NamespacedName{Name: "pod1", Namespace: "ns1"}
+		podRef := apitypes.NamespacedName{Name: "pod1", Namespace: "ns1"}
 
 		By("storing first batch with pod1 metrics")
 		s.Store(podMetricsBatch(podMetrics(podRef, containerMetricsPoint{"container1", newMetricsPoint(containerStart, containerStart.Add(-10*time.Second), 10*CoreSecond, 4*MiByte)})))
@@ -279,7 +280,7 @@ var _ = Describe("Pod storage", func() {
 	It("should get empty metrics in one cycle for fresh new container's time duration less than 10s between start time and timestamp", func() {
 		s := NewStorage(60 * time.Second)
 		containerStart := time.Now()
-		podRef := types.NamespacedName{Name: "pod1", Namespace: "ns1"}
+		podRef := apitypes.NamespacedName{Name: "pod1", Namespace: "ns1"}
 
 		By("storing first batch with pod1 metrics")
 		s.Store(podMetricsBatch(podMetrics(podRef, containerMetricsPoint{"container1", newMetricsPoint(containerStart, containerStart.Add(9*time.Second), 10*CoreSecond, 4*MiByte)})))
@@ -290,7 +291,7 @@ var _ = Describe("Pod storage", func() {
 	It("provides pod metrics from stored batches when StartTime is zero", func() {
 		s := NewStorage(60 * time.Second)
 		containerStart := time.Now()
-		podRef := types.NamespacedName{Name: "pod1", Namespace: "ns1"}
+		podRef := apitypes.NamespacedName{Name: "pod1", Namespace: "ns1"}
 
 		By("storing first batch with pod1 metrics")
 		s.Store(podMetricsBatch(podMetrics(podRef, containerMetricsPoint{"container1", newMetricsPoint(time.Time{}, containerStart.Add(120*time.Second), 1*CoreSecond, 4*MiByte)})))
@@ -304,22 +305,24 @@ var _ = Describe("Pod storage", func() {
 
 		By("returning metric for pod1")
 		Expect(s.Ready()).To(BeTrue())
-		ts, ms, err := s.GetPodMetrics(podRef)
+		ms, err := s.GetPodMetrics(&metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{Name: podRef.Name, Namespace: podRef.Namespace}})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(ts).Should(BeEquivalentTo([]api.TimeInfo{{Timestamp: containerStart.Add(125 * time.Second), Window: 5 * time.Second}}))
-		Expect(ms).Should(BeEquivalentTo([][]metrics.ContainerMetrics{{{
+		Expect(ms).To(HaveLen(1))
+		Expect(ms[0].Timestamp.Time).Should(BeEquivalentTo(containerStart.Add(125 * time.Second)))
+		Expect(ms[0].Window.Duration).Should(BeEquivalentTo(5 * time.Second))
+		Expect(ms[0].Containers).Should(BeEquivalentTo([]metrics.ContainerMetrics{{
 			Name: "container1",
-			Usage: v1.ResourceList{
-				v1.ResourceCPU:    *resource.NewScaledQuantity(1*CoreSecond, -9),
-				v1.ResourceMemory: *resource.NewQuantity(5*MiByte, resource.BinarySI),
+			Usage: corev1.ResourceList{
+				corev1.ResourceCPU:    *resource.NewScaledQuantity(1*CoreSecond, -9),
+				corev1.ResourceMemory: *resource.NewQuantity(5*MiByte, resource.BinarySI),
 			},
-		}}}))
+		}}))
 	})
 
 	It("should get empty metrics if not all containers data points of one pod reported at the first cycle", func() {
 		s := NewStorage(60 * time.Second)
 		containerStart := time.Now()
-		podRef := types.NamespacedName{Name: "pod1", Namespace: "ns1"}
+		podRef := apitypes.NamespacedName{Name: "pod1", Namespace: "ns1"}
 
 		By("store first batch")
 		s.Store(podMetricsBatch(podMetrics(podRef,
@@ -333,19 +336,20 @@ var _ = Describe("Pod storage", func() {
 		)))
 
 		By("should get empty metrics when not all containers data points of one pod reported")
-		ts, ms, err := s.GetPodMetrics(podRef)
+		ms, err := s.GetPodMetrics(&metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{Name: podRef.Name, Namespace: podRef.Namespace}})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(ts).To(HaveLen(1))
-		Expect(ms).To(HaveLen(1))
-		Expect(ms[0]).To(HaveLen(0))
+		Expect(ms).To(HaveLen(0))
 	})
 })
 
-func checkPodResponseEmpty(s *storage, pods ...types.NamespacedName) {
-	ts, ms, err := s.GetPodMetrics(pods...)
+func checkPodResponseEmpty(s *storage, podRef ...apitypes.NamespacedName) {
+	pods := []*metav1.PartialObjectMetadata{}
+	for _, ref := range podRef {
+		pods = append(pods, &metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace}})
+	}
+	ms, err := s.GetPodMetrics(pods...)
 	Expect(err).NotTo(HaveOccurred())
-	Expect(ts).To(Equal(make([]api.TimeInfo, len(pods))))
-	Expect(ms).To(Equal(make([][]metrics.ContainerMetrics, len(pods))))
+	Expect(ms).To(HaveLen(0))
 }
 
 func podMetricsBatch(pods ...podMetricsPoint) *MetricsBatch {
@@ -358,7 +362,7 @@ func podMetricsBatch(pods ...podMetricsPoint) *MetricsBatch {
 	return batch
 }
 
-func podMetrics(pod types.NamespacedName, cs ...containerMetricsPoint) podMetricsPoint {
+func podMetrics(pod apitypes.NamespacedName, cs ...containerMetricsPoint) podMetricsPoint {
 	point := podMetricsPoint{
 		NamespacedName:  pod,
 		PodMetricsPoint: PodMetricsPoint{Containers: make(map[string]MetricsPoint, len(cs))},

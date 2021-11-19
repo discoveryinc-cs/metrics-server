@@ -27,13 +27,13 @@ all: metrics-server
 # Build Rules
 # -----------
 
-SRC_DEPS=$(shell find pkg cmd -type f -name "*.go")
+SRC_DEPS=$(shell find pkg cmd -type f -name "*.go") go.mod go.sum
 CHECKSUM=$(shell md5sum $(SRC_DEPS) | md5sum | awk '{print $$1}')
 PKG:=k8s.io/client-go/pkg
 LDFLAGS:=-X $(PKG)/version.gitVersion=$(GIT_TAG) -X $(PKG)/version.gitCommit=$(GIT_COMMIT) -X $(PKG)/version.buildDate=$(BUILD_DATE)
 
 metrics-server: $(SRC_DEPS)
-	GOARCH=$(ARCH) CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o metrics-server sigs.k8s.io/metrics-server/cmd/metrics-server
+	GOARCH=$(ARCH) CGO_ENABLED=0 go build -mod=readonly -ldflags "$(LDFLAGS)" -o metrics-server sigs.k8s.io/metrics-server/cmd/metrics-server
 
 # Image Rules
 # -----------
@@ -44,8 +44,8 @@ CONTAINER_ARCH_TARGETS=$(addprefix container-,$(ALL_ARCHITECTURES))
 container:
 	# Pull base image explicitly. Keep in sync with Dockerfile, otherwise
 	# GCB builds will start failing.
-	docker pull golang:1.17.0
-	docker buildx build -t $(REGISTRY)/metrics-server-$(ARCH):$(CHECKSUM) --build-arg ARCH=$(ARCH) --build-arg GIT_TAG=$(GIT_TAG) --build-arg GIT_COMMIT=$(GIT_COMMIT) .
+	docker pull golang:1.17.1
+	docker build -t $(REGISTRY)/metrics-server-$(ARCH):$(CHECKSUM) --build-arg ARCH=$(ARCH) --build-arg GIT_TAG=$(GIT_TAG) --build-arg GIT_COMMIT=$(GIT_COMMIT) .
 
 .PHONY: container-all
 container-all: $(CONTAINER_ARCH_TARGETS);
@@ -125,12 +125,16 @@ ifndef HAS_BENCHSTAT
 	@go install -mod=readonly golang.org/x/perf/cmd/benchstat
 endif
 
-# CLI flags tests
+# Image tests
 # ------------
 
-.PHONY: test-cli
-test-cli: container
-	IMAGE=$(REGISTRY)/metrics-server-$(ARCH):$(CHECKSUM) EXPECTED_VERSION=$(GIT_TAG) ./test/test-cli.sh
+.PHONY: test-image
+test-image: container
+	IMAGE=$(REGISTRY)/metrics-server-$(ARCH):$(CHECKSUM) EXPECTED_ARCH=$(ARCH) EXPECTED_VERSION=$(GIT_TAG) ./test/test-image.sh
+
+.PHONY: test-image-all
+test-image-all:
+	@for arch in $(ALL_ARCHITECTURES); do ARCH=$${arch} $(MAKE) test-image; done
 
 # E2e tests
 # -----------
@@ -147,23 +151,31 @@ test-e2e-1.22:
 
 .PHONY: test-e2e-1.21
 test-e2e-1.21:
-	NODE_IMAGE=kindest/node:v1.21.1@sha256:fae9a58f17f18f06aeac9772ca8b5ac680ebbed985e266f711d936e91d113bad ./test/test-e2e.sh
+	NODE_IMAGE=kindest/node:v1.21.1@sha256:69860bda5563ac81e3c0057d654b5253219618a22ec3a346306239bba8cfa1a6 ./test/test-e2e.sh
 
 .PHONY: test-e2e-1.20
 test-e2e-1.20:
-	NODE_IMAGE=kindest/node:v1.20.7@sha256:e645428988191fc824529fd0bb5c94244c12401cf5f5ea3bd875eb0a787f0fe9 ./test/test-e2e.sh
+	NODE_IMAGE=kindest/node:v1.20.7@sha256:cbeaf907fc78ac97ce7b625e4bf0de16e3ea725daf6b04f930bd14c67c671ff9 ./test/test-e2e.sh
 
 .PHONY: test-e2e-1.19
 test-e2e-1.19:
-	NODE_IMAGE=kindest/node:v1.19.11@sha256:7664f21f9cb6ba2264437de0eb3fe99f201db7a3ac72329547ec4373ba5f5911 ./test/test-e2e.sh
+	NODE_IMAGE=kindest/node:v1.19.11@sha256:07db187ae84b4b7de440a73886f008cf903fcf5764ba8106a9fd5243d6f32729 ./test/test-e2e.sh
 
 .PHONY: test-e2e-ha
 test-e2e-ha:
-	HIGH_AVAILABILITY=true $(MAKE) test-e2e
+	SKAFFOLD_PROFILE="test-ha" $(MAKE) test-e2e
 
 .PHONY: test-e2e-ha-all
 test-e2e-ha-all:
-	HIGH_AVAILABILITY=true $(MAKE) test-e2e-all
+	SKAFFOLD_PROFILE="test-ha" $(MAKE) test-e2e-all
+
+.PHONY: test-e2e-helm
+test-e2e-helm:
+	SKAFFOLD_PROFILE="helm" $(MAKE) test-e2e
+
+.PHONY: test-e2e-helm-all
+test-e2e-helm-all:
+	SKAFFOLD_PROFILE="helm" $(MAKE) test-e2e-all
 
 # Static analysis
 # ---------------
@@ -172,7 +184,7 @@ test-e2e-ha-all:
 verify: verify-licenses verify-lint verify-toc verify-deps verify-generated verify-structured-logging
 
 .PHONY: update
-update: update-licenses update-lint update-toc update-generated
+update: update-licenses update-lint update-toc update-deps update-generated
 
 # License
 # -------
@@ -247,6 +259,10 @@ endif
 # Dependencies
 # ------------
 
+.PHONY: update-deps
+update-deps:
+	go mod tidy
+
 .PHONY: verify-deps
 verify-deps:
 	go mod verify
@@ -273,7 +289,7 @@ update-generated:
 
 # Remove when CI is migrated
 lint: verify
-test-version: test-cli
+test-version: test-image-all
 
 # Clean
 # -----

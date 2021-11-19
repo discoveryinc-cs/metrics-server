@@ -18,6 +18,7 @@ package storage
 import (
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	apitypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 	"k8s.io/metrics/pkg/apis/metrics"
@@ -26,7 +27,7 @@ import (
 )
 
 // fresh new container's minimum allowable time duration between start time and timestamp.
-//if time duration less than 10s, can produce inaccurate data
+// if time duration less than 10s, can produce inaccurate data
 const freshContainerMinMetricsResolution = 10 * time.Second
 
 // nodeStorage stores last two pod metric batches and calculates cpu & memory usage
@@ -40,20 +41,19 @@ type podStorage struct {
 	// prev stores pod metric points from scrape preceding the last one.
 	// Points timestamp should proceed the corresponding points from last and have same start time (no restart between them).
 	prev map[apitypes.NamespacedName]PodMetricsPoint
-	//scrape period of metrics server
+	// scrape period of metrics server
 	metricResolution time.Duration
 }
 
-func (s *podStorage) GetMetrics(pods ...apitypes.NamespacedName) ([]api.TimeInfo, [][]metrics.ContainerMetrics, error) {
-	tis := make([]api.TimeInfo, len(pods))
-	ms := make([][]metrics.ContainerMetrics, len(pods))
-	for i, pod := range pods {
-		lastPod, found := s.last[pod]
+func (s *podStorage) GetMetrics(pods ...*metav1.PartialObjectMetadata) ([]metrics.PodMetrics, error) {
+	results := make([]metrics.PodMetrics, 0, len(pods))
+	for _, pod := range pods {
+		lastPod, found := s.last[apitypes.NamespacedName{Name: pod.Name, Namespace: pod.Namespace}]
 		if !found {
 			continue
 		}
 
-		prevPod, found := s.prev[pod]
+		prevPod, found := s.prev[apitypes.NamespacedName{Name: pod.Name, Namespace: pod.Namespace}]
 		if !found {
 			continue
 		}
@@ -83,11 +83,20 @@ func (s *podStorage) GetMetrics(pods ...apitypes.NamespacedName) ([]api.TimeInfo
 			}
 		}
 		if allContainersPresent {
-			ms[i] = cms
-			tis[i] = earliestTimeInfo
+			results = append(results, metrics.PodMetrics{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              pod.Name,
+					Namespace:         pod.Namespace,
+					Labels:            pod.Labels,
+					CreationTimestamp: metav1.NewTime(time.Now()),
+				},
+				Timestamp:  metav1.NewTime(earliestTimeInfo.Timestamp),
+				Window:     metav1.Duration{Duration: earliestTimeInfo.Window},
+				Containers: cms,
+			})
 		}
 	}
-	return tis, ms, nil
+	return results, nil
 }
 
 func (s *podStorage) Store(newPods *MetricsBatch) {

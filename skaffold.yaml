@@ -11,6 +11,7 @@ build:
     docker:
       dockerfile: Dockerfile
       buildArgs:
+        ARCH: "amd64"
         GIT_TAG: "devel"
 deploy:
   kustomize:
@@ -22,3 +23,16 @@ profiles:
       kustomize:
         paths:
         - manifests/test-ha
+  - name: helm
+    deploy:
+      helm:
+        releases:
+          - name: metrics-server
+            artifactOverrides:
+              imageKey: gcr.io/k8s-staging-metrics-server/metrics-server
+            chartPath: charts/metrics-server
+            setValueTemplates:
+              image.repository: "{{.IMAGE_REPO}}"
+              image.tag: "{{.IMAGE_TAG}}"
+            valuesFiles:
+              - charts/metrics-server/ci/ci-values.yaml

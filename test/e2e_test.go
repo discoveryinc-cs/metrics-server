@@ -74,32 +74,32 @@ var _ = Describe("MetricsServer", func() {
 		panic(err)
 	}
 	BeforeSuite(func() {
-		mustDeletePod(client, cpuConsumerPodName)
+		deletePod(client, cpuConsumerPodName)
 		err = consumeCPU(client, cpuConsumerPodName)
 		if err != nil {
 			panic(err)
 		}
-		mustDeletePod(client, memoryConsumerPodName)
+		deletePod(client, memoryConsumerPodName)
 		err = consumeMemory(client, memoryConsumerPodName)
 		if err != nil {
 			panic(err)
 		}
-		mustDeletePod(client, initContainerPodName)
+		deletePod(client, initContainerPodName)
 		err = consumeWithInitContainer(client, initContainerPodName)
 		if err != nil {
 			panic(err)
 		}
-		mustDeletePod(client, sideCarContainerPodName)
+		deletePod(client, sideCarContainerPodName)
 		err = consumeWithSideCarContainer(client, sideCarContainerPodName)
 		if err != nil {
 			panic(err)
 		}
 	})
 	AfterSuite(func() {
-		mustDeletePod(client, cpuConsumerPodName)
-		mustDeletePod(client, memoryConsumerPodName)
-		mustDeletePod(client, initContainerPodName)
-		mustDeletePod(client, sideCarContainerPodName)
+		deletePod(client, cpuConsumerPodName)
+		deletePod(client, memoryConsumerPodName)
+		deletePod(client, initContainerPodName)
+		deletePod(client, sideCarContainerPodName)
 	})
 
 	It("exposes metrics from at least one pod in cluster", func() {
@@ -225,7 +225,7 @@ livez check passed
 	It("exposes prometheus metrics", func() {
 		msPods := mustGetMetricsServerPods(client)
 		for _, pod := range msPods {
-			resp, err := proxyRequestToPod(restConfig, pod.Namespace, pod.Name, "https", 443, "/metrics")
+			resp, err := proxyRequestToPod(restConfig, pod.Namespace, pod.Name, "https", 4443, "/metrics")
 			Expect(err).NotTo(HaveOccurred(), "Failed to get Metrics Server /metrics endpoint")
 			metrics, err := parseMetricNames(resp)
 			Expect(err).NotTo(HaveOccurred(), "Failed to parse Metrics Server metrics")
@@ -236,6 +236,8 @@ livez check passed
 				"apiserver_audit_requests_rejected_total",
 				"apiserver_client_certificate_expiration_seconds",
 				"apiserver_current_inflight_requests",
+				"apiserver_delegated_authz_request_duration_seconds",
+				"apiserver_delegated_authz_request_total",
 				"apiserver_envelope_encryption_dek_cache_fill_percent",
 				"apiserver_request_duration_seconds",
 				"apiserver_request_filter_duration_seconds",
@@ -245,6 +247,7 @@ livez check passed
 				"apiserver_storage_data_key_generation_failures_total",
 				"apiserver_storage_envelope_transformation_cache_misses_total",
 				"apiserver_tls_handshake_errors_total",
+				"apiserver_webhooks_x509_missing_san_total",
 				"authenticated_user_requests",
 				"authentication_attempts",
 				"authentication_duration_seconds",
@@ -291,6 +294,7 @@ livez check passed
 				"process_virtual_memory_max_bytes",
 				"rest_client_exec_plugin_certificate_rotation_age",
 				"rest_client_exec_plugin_ttl_seconds",
+				"rest_client_rate_limiter_duration_seconds",
 				"rest_client_request_duration_seconds",
 				"rest_client_requests_total",
 				"workqueue_adds_total",
@@ -444,9 +448,9 @@ func sendRequest(config *rest.Config, url string) (*http.Response, error) {
 
 func noop() {}
 
-func watchPodReadyStatus(client clientset.Interface, podNameSpace string, podName string, resourceVersion string) error {
+func watchPodReadyStatus(client clientset.Interface, podNamespace string, podName string, resourceVersion string) error {
 	timeout := time.After(time.Second * 300)
-	var api = client.CoreV1().Pods(podNameSpace)
+	var api = client.CoreV1().Pods(podNamespace)
 	watcher, err := api.Watch(context.TODO(), metav1.ListOptions{ResourceVersion: resourceVersion})
 	if err != nil {
 		return err
@@ -485,7 +489,7 @@ func consumeCPU(client clientset.Interface, podName string) error {
 				Name:    podName,
 				Command: []string{"./consume-cpu/consume-cpu"},
 				Args:    []string{"--duration-sec=60", "--millicores=50"},
-				Image:   "gcr.io/kubernetes-e2e-test-images/resource-consumer:1.5",
+				Image:   "k8s.gcr.io/e2e-test-images/resource-consumer:1.9",
 				Resources: corev1.ResourceRequirements{
 					Requests: map[corev1.ResourceName]resource.Quantity{
 						corev1.ResourceCPU: mustQuantity("100m"),
@@ -510,7 +514,7 @@ func consumeMemory(client clientset.Interface, podName string) error {
 				Name:    podName,
 				Command: []string{"stress"},
 				Args:    []string{"-m", "1", "--vm-bytes", "50M", "--vm-hang", "0", "-t", "60"},
-				Image:   "gcr.io/kubernetes-e2e-test-images/resource-consumer:1.5",
+				Image:   "k8s.gcr.io/e2e-test-images/resource-consumer:1.9",
 				Resources: corev1.ResourceRequirements{
 					Requests: map[corev1.ResourceName]resource.Quantity{
 						corev1.ResourceMemory: mustQuantity("100Mi"),
@@ -534,7 +538,7 @@ func consumeWithInitContainer(client clientset.Interface, podName string) error 
 				Name:    podName,
 				Command: []string{"./consume-cpu/consume-cpu"},
 				Args:    []string{"--duration-sec=60", "--millicores=50"},
-				Image:   "gcr.io/kubernetes-e2e-test-images/resource-consumer:1.5",
+				Image:   "k8s.gcr.io/e2e-test-images/resource-consumer:1.9",
 				Resources: corev1.ResourceRequirements{
 					Requests: map[corev1.ResourceName]resource.Quantity{
 						corev1.ResourceCPU:    mustQuantity("100m"),
@@ -548,7 +552,7 @@ func consumeWithInitContainer(client clientset.Interface, podName string) error 
 					Name:    "init-container",
 					Command: []string{"./consume-cpu/consume-cpu"},
 					Args:    []string{"--duration-sec=10", "--millicores=50"},
-					Image:   "gcr.io/kubernetes-e2e-test-images/resource-consumer:1.5",
+					Image:   "k8s.gcr.io/e2e-test-images/resource-consumer:1.9",
 				},
 			}},
 	}
@@ -568,7 +572,7 @@ func consumeWithSideCarContainer(client clientset.Interface, podName string) err
 				Name:    podName,
 				Command: []string{"./consume-cpu/consume-cpu"},
 				Args:    []string{"--duration-sec=60", "--millicores=50"},
-				Image:   "gcr.io/kubernetes-e2e-test-images/resource-consumer:1.5",
+				Image:   "k8s.gcr.io/e2e-test-images/resource-consumer:1.9",
 				Resources: corev1.ResourceRequirements{
 					Requests: map[corev1.ResourceName]resource.Quantity{
 						corev1.ResourceCPU:    mustQuantity("100m"),
@@ -580,7 +584,7 @@ func consumeWithSideCarContainer(client clientset.Interface, podName string) err
 				Name:    "sidecar-container",
 				Command: []string{"./consume-cpu/consume-cpu"},
 				Args:    []string{"--duration-sec=60", "--millicores=50"},
-				Image:   "gcr.io/kubernetes-e2e-test-images/resource-consumer:1.5",
+				Image:   "k8s.gcr.io/e2e-test-images/resource-consumer:1.9",
 				Resources: corev1.ResourceRequirements{
 					Requests: map[corev1.ResourceName]resource.Quantity{
 						corev1.ResourceCPU:    mustQuantity("100m"),
@@ -598,9 +602,9 @@ func consumeWithSideCarContainer(client clientset.Interface, podName string) err
 	return watchPodReadyStatus(client, metav1.NamespaceDefault, podName, currentPod.ResourceVersion)
 }
 
-func mustDeletePod(client clientset.Interface, podName string) {
+func deletePod(client clientset.Interface, podName string) {
 	var gracePeriodSeconds int64 = 0
-	client.CoreV1().Pods(metav1.NamespaceDefault).Delete(context.TODO(), podName, metav1.DeleteOptions{
+	_ = client.CoreV1().Pods(metav1.NamespaceDefault).Delete(context.TODO(), podName, metav1.DeleteOptions{
 		GracePeriodSeconds: &gracePeriodSeconds,
 	})
 }

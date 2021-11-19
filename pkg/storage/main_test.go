@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//      http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -12,17 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package client
+package storage
 
 import (
-	"context"
+	"testing"
 
-	v1 "k8s.io/api/core/v1"
-	"sigs.k8s.io/metrics-server/pkg/storage"
+	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/gomega"
 )
 
-// KubeletMetricsGetter knows how to fetch metrics from the Kubelet
-type KubeletMetricsGetter interface {
-	// GetMetrics fetches Resource metrics from the given Kubelet
-	GetMetrics(ctx context.Context, node *v1.Node) (*storage.MetricsBatch, error)
+func TestStorage(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "storage suite")
 }

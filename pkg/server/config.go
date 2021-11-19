@@ -53,7 +53,7 @@ func (c Config) Complete() (*server, error) {
 	if err != nil {
 		return nil, err
 	}
-	kubeletClient, err := resource.NewClient(*c.Kubelet)
+	kubeletClient, err := resource.NewForConfig(c.Kubelet)
 	if err != nil {
 		return nil, fmt.Errorf("unable to construct a client to connect to the kubelets: %v", err)
 	}
@@ -73,7 +73,7 @@ func (c Config) Complete() (*server, error) {
 	genericServer.Handler.NonGoRestfulMux.HandleFunc("/metrics", metricsHandler)
 
 	store := storage.NewStorage(c.MetricResolution)
-	if err := api.Install(store, &podMetadataLister{podInformer.Lister()}, nodes.Lister(), genericServer); err != nil {
+	if err := api.Install(store, podInformer.Lister(), nodes.Lister(), genericServer); err != nil {
 		return nil, err
 	}
 

@@ -15,7 +15,7 @@ helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
 After you've installed the repo you can install the chart.
 
 ```shell
-helm upgrade --install metrics-server/metrics-server
+helm upgrade --install metrics-server metrics-server/metrics-server
 ```
 
 ## Configuration
@@ -48,6 +48,7 @@ The following table lists the configurable parameters of the _Metrics Server_ ch
 | `podDisruptionBudget.enabled`        | If `true`, create `PodDisruptionBudget` resource.                                                                                                                                                                                                                | `{}`                                       |
 | `podDisruptionBudget.minAvailable`   | Set the `PodDisruptionBugdet` minimum available pods.                                                                                                                                                                                                            | `nil`                                      |
 | `podDisruptionBudget.maxUnavailable` | Set the `PodDisruptionBugdet` maximum unavailable pods.                                                                                                                                                                                                          | `nil`                                      |
+| `defaultArgs`                        | Default arguments to pass to the _metrics-server_ command.                                                                                                                                                                                                       | See _values.yaml_                          |
 | `args`                               | Additional arguments to pass to the _metrics-server_ command.                                                                                                                                                                                                    | `[]`                                       |
 | `livenessProbe`                      | Liveness probe.                                                                                                                                                                                                                                                  | See _values.yaml_                          |
 | `readinessProbe`                     | Readiness probe.                                                                                                                                                                                                                                                 | See _values.yaml_                          |
