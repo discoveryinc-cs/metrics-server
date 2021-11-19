@@ -37,7 +37,7 @@ spec:
           protocol: TCP
         readinessProbe:
           httpGet:
-            path: /readyz
+            path: /version
             port: https
             scheme: HTTPS
           periodSeconds: 10
@@ -45,7 +45,7 @@ spec:
           initialDelaySeconds: 20
         livenessProbe:
           httpGet:
-            path: /livez
+            path: /version
             port: https
             scheme: HTTPS
           periodSeconds: 10
